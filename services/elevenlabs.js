@@ -21,6 +21,11 @@ const logger = winston.createLogger({
 });
 
 // ----------------------
+// Approved ElevenLabs Agent (Wiggins)
+// ----------------------
+const ALLOWED_AGENT_ID = "agent_1901k5390f3je1s8pqqhqayr0ab5";
+
+// ----------------------
 // Phone Normalizer
 // ----------------------
 function normalizePhone(phone) {
@@ -28,7 +33,7 @@ function normalizePhone(phone) {
 
   let digits = phone.replace(/\D/g, "");
 
-  // US number without country code → add +1
+  // 10-digit US number → prepend country code
   if (digits.length === 10) {
     digits = "1" + digits;
   }
@@ -47,6 +52,22 @@ async function elevenWebhookHandler(req, res) {
     const data = body?.data || {};
 
     // -------------------------------
+    // AGENT FILTER (Wiggins Only)
+    // -------------------------------
+    const agentId =
+      data?.agent?.agent_id ||
+      data?.agent_id ||
+      data?.conversation_initiation_client_data?.dynamic_variables?.system__current_agent_id ||
+      null;
+
+    if (agentId !== ALLOWED_AGENT_ID) {
+      logger.warn("❌ Ignoring webhook from different agent:", { agentId });
+      return res.status(200).send("Ignored: Not Wiggins agent");
+    }
+
+    logger.info("✔ Accepted webhook from Wiggins agent", { agentId });
+
+    // -------------------------------
     // Caller Phone
     // -------------------------------
     const phoneRaw =
@@ -59,13 +80,11 @@ async function elevenWebhookHandler(req, res) {
     // TEST vs PRODUCTION LOGIC
     // -------------------------------
     if (process.env.NODE_ENV === "production") {
-      // 🔥 PROD → MUST HAVE REAL PHONE
       if (!phone) {
-        logger.error("❌ PROD MODE: Missing caller_id (real calls must send caller phone)");
+        logger.error("❌ PROD MODE: Missing caller_id");
         return res.status(400).send("Missing caller phone number (caller_id)");
       }
     } else {
-      // 🔥 DEV / TEST → fallback to fake number
       if (!phone) {
         logger.warn("⚠ TEST MODE: No caller_id → Using FAKE TEST NUMBER +15555550123");
         phone = "+15555550123";
@@ -90,9 +109,11 @@ async function elevenWebhookHandler(req, res) {
     // -------------------------------
     // Timestamps
     // -------------------------------
-    const startTime = data?.metadata?.start_time_unix_secs
-      ? new Date(data.metadata.start_time_unix_secs * 1000).toISOString()
-      : "Unknown";
+    const startTime = data?.conversation_initiation_client_data?.dynamic_variables?.system__date
+      ? data.conversation_initiation_client_data.dynamic_variables.system__date
+      : data?.metadata?.start_time_unix_secs
+        ? new Date(data.metadata.start_time_unix_secs * 1000).toISOString()
+        : "Unknown";
 
     const endTime = data?.metadata?.accepted_time_unix_secs
       ? new Date(data.metadata.accepted_time_unix_secs * 1000).toISOString()
